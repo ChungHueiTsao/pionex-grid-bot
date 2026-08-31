@@ -8,6 +8,8 @@ live_tiered_ma_state.json
 live_peak_equity_state.json
 live_grid_state.json
 live_ta.lock
+live_status.json
+live_stop_requested.flag
 
 # Python
 __pycache__/

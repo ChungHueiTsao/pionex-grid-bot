@@ -48,6 +48,8 @@ MA_STATE_FILE = Path(__file__).parent / "live_ma_filter_state.json"
 TIERED_STATE_FILE = Path(__file__).parent / "live_tiered_ma_state.json"
 PEAK_STATE_FILE = Path(__file__).parent / "live_peak_equity_state.json"
 LOCK_FILE = Path(__file__).parent / "live_ta.lock"
+STATUS_FILE = Path(__file__).parent / "live_status.json"
+STOP_FLAG_FILE = Path(__file__).parent / "live_stop_requested.flag"
 
 # Below this notional value (in quote currency, e.g. USDT) we treat a
 # balance as "dust" rather than a real position -- avoids endless tiny
@@ -166,6 +168,49 @@ def check_portfolio_stop_loss(client: PionexClient, symbol: str, max_drawdown_pc
 
     _atomic_write_json(PEAK_STATE_FILE, {"peak_equity": peak, "halted": False})
     return None
+
+
+MAX_EQUITY_HISTORY_POINTS = 2000  # caps live_status.json's size; oldest points drop off
+
+
+def write_status(client: PionexClient, symbol: str, strategy: str, last_message: str,
+                  running: bool) -> None:
+    """Snapshot for the local dashboard (dashboard.py) to read -- read-only
+    from the dashboard's side, this is the only thing that writes it. Never
+    includes API key/secret. Best-effort: a failure here must never crash
+    the trading loop, so callers should wrap this in its own try/except.
+
+    Also appends to a capped equity-history list so the dashboard can chart
+    the account's real equity over time (this is live/actual polling data,
+    not a backtest)."""
+    base, quote = symbol.split("_")
+    balances = {b.coin: b for b in client.get_balances()}
+    price = float(client.get_ticker(symbol)[0]["close"])
+    base_free = balances[base].free if base in balances else 0.0
+    quote_free = balances[quote].free if quote in balances else 0.0
+    equity = quote_free + base_free * price
+    peak_state = _load_json_state(PEAK_STATE_FILE)
+    peak = peak_state.get("peak_equity", equity)
+
+    prior = _load_json_state(STATUS_FILE)
+    history = prior.get("equity_history", [])
+    history.append({"t": int(time.time() * 1000), "equity": round(equity, 2)})
+    history = history[-MAX_EQUITY_HISTORY_POINTS:]
+
+    _atomic_write_json(STATUS_FILE, {
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()) + " UTC",
+        "running": running,
+        "strategy": strategy,
+        "symbol": symbol,
+        "price": price,
+        "base_free": base_free,
+        "quote_free": quote_free,
+        "equity": round(equity, 2),
+        "peak_equity": round(peak, 2),
+        "drawdown_pct": round((peak - equity) / peak * 100, 2) if peak > 0 else 0.0,
+        "last_message": last_message,
+        "equity_history": history,
+    })
 
 
 class LiveTieredMATrader:
@@ -569,26 +614,50 @@ def main() -> None:
     if state_file.exists():
         print(f"Resuming from {state_file.name}: position_qty={trader.position_qty}")
 
+    STOP_FLAG_FILE.unlink(missing_ok=True)  # clear any stale flag from a previous run
     print(f"\nPolling every {args.poll_seconds}s. Portfolio stop-loss: sells everything and "
           f"halts for good if equity drops {args.max_drawdown_pct:.0%} below its peak. "
           f"Ctrl+C to stop the loop without closing any position "
           f"(rerun to resume, or close manually on Pionex).\n"
+          f"Local dashboard (dashboard.py) can request a graceful stop the same way -- "
+          f"it never places or closes orders itself, only asks this loop to exit.\n"
           f"A network/API error will be logged and retried, not crash the script silently.")
     consecutive_errors = 0
+    last_status_message = "started"
     try:
         while True:
+            if STOP_FLAG_FILE.exists():
+                print("\nStop requested via dashboard. Exiting loop (no position closed).")
+                STOP_FLAG_FILE.unlink(missing_ok=True)
+                try:
+                    write_status(client, args.symbol, args.strategy, "stopped via dashboard", False)
+                except Exception:
+                    pass
+                break
             try:
                 stop_msg = check_portfolio_stop_loss(client, args.symbol, args.max_drawdown_pct)
                 if stop_msg:
                     print(stop_msg)
+                    last_status_message = stop_msg
+                    try:
+                        write_status(client, args.symbol, args.strategy, last_status_message, False)
+                    except Exception:
+                        pass
                     break
 
                 status = trader.check_daily_signal()
                 if status:
                     print(status)
+                    last_status_message = status
                 if args.strategy == "ema-atr":
-                    print(trader.check_stop_take_profit())
+                    tp_status = trader.check_stop_take_profit()
+                    print(tp_status)
+                    last_status_message = tp_status
                 consecutive_errors = 0
+                try:
+                    write_status(client, args.symbol, args.strategy, last_status_message, True)
+                except Exception as status_err:
+                    print(f"(dashboard status write failed, non-fatal: {status_err})")
             except Exception as e:
                 consecutive_errors += 1
                 backoff = min(args.poll_seconds * consecutive_errors, 900.0)
@@ -599,6 +668,10 @@ def main() -> None:
             time.sleep(args.poll_seconds)
     except KeyboardInterrupt:
         print("\nInterrupted. State saved to", state_file.name)
+        try:
+            write_status(client, args.symbol, args.strategy, "stopped via Ctrl+C", False)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
