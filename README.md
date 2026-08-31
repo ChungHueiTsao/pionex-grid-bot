@@ -14,6 +14,7 @@
 - ✅ `ta_strategy.py` — 純技術指標策略引擎（不用網格），內含三種：`run_tiered_ma_strategy()`(三階梯多均線50/100/200日，**目前預設/建議使用**，+1818.8% vs 買入持有+1229.0%，8.9年回測，回撤還更低)、`run_ma_filter_strategy()`(單一200日均線濾網，+1003.4%，較簡單的備選) 與 `run_ta_strategy()`(EMA黃金交叉+ATR停損停利，回測-4.4%，僅供對照)
 - ✅ `live.py` — 網格真單邏輯已完整寫好（下限價單、追蹤成交、觸發停損自動取消掛單+市價出清、狀態存檔可斷線續跑），**但沒有 API Key 前跑不起來**，且執行它、真正送出真單必須是你自己按下去
 - ✅ `live_ta.py` — 技術指標策略真單邏輯（現貨市價單），`--strategy tiered-ma`(預設) / `--strategy ma-filter` / `--strategy ema-atr`(舊版對照)，安全機制與 `live.py` 相同（三道防呆），**同樣沒有 API Key 跑不起來，執行送出真單必須你自己按**
+- ✅ `generate_report.py` + `docs/` — 月度回測報告網站，公開部署在 [GitHub Pages](https://chunghueitsao.github.io/pionex-grid-bot/)，本機工作排程器每月 1 號自動重新回測、更新網站（見下方「定期報告與排程」）
 
 ## 安裝
 
@@ -109,6 +110,22 @@ python live_ta.py --strategy ema-atr --symbol BTC_USDT --ema-fast 20 --ema-slow 
 - **部分成交**：BTC/USDT 流動性通常足夠讓市價單一次成交完畢，但沒有針對「只成交一部分」做特別處理。
 
 這些已知缺口對這個資金規模（$100-300）的實際影響有限，但要誠實列出來，不要讓你誤以為現在是「零風險」。
+
+## 定期報告與排程（2026-08-31）
+
+**報告網站**：https://chunghueitsao.github.io/pionex-grid-bot/ — 公開頁面，只放回測圖表與統計數字，不會有 API Key、帳戶餘額、實際入金金額。`generate_report.py` 會抓最新公開行情、重新回測全部四種策略（買入持有、三階梯多均線、單一均線濾網、網格、EMA+ATR），輸出 `docs/index.html` 給 GitHub Pages 服務，並把當次結果附加寫入 `docs/history.json`，累積兩次以上就會顯示「逐月追蹤」趨勢圖。
+
+**排程方式：本機 Windows 工作排程器**（不是雲端），原因：
+
+一開始想用 claude.ai 的雲端排程（cloud routine）每月自動執行，設定過程需要：① 把 claude.ai 帳號連到 GitHub（跟本機 `gh` CLI 登入是兩件事）② 安裝 Claude GitHub App（範圍限縮到只授權這一個 repo）——這兩步都需要使用者本人在瀏覽器裡完成 OAuth 授權和 email 驗證，無法自動化點過去。設定好之後手動觸發測試，發現雲端執行環境的網路白名單**沒有放行 `api.pionex.com`**（只允許 pypi.org、npmjs.org、api.anthropic.com 等已知網域），且介面上找不到可以自訂網域白名單的設定，所以雲端排程目前無法用於這個需要打第三方 API 的任務。好消息是失敗處理完全符合設計：偵測到 403 後沒有硬幹、確認沒有殘留變更、乖乖回報失敗並推播通知。
+
+因此改用**本機工作排程器**（`monthly_report_task.ps1` + `schtasks`，工作名稱 `PionexGridBot-MonthlyReport`，每月 1 號下午 4:10 執行）：
+```powershell
+schtasks /Create /TN "PionexGridBot-MonthlyReport" /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\HUEI\Desktop\Claude\pionex-grid-bot\monthly_report_task.ps1" /SC MONTHLY /D 1 /ST 16:10 /RL LIMITED /F
+```
+腳本會重新回測、檢查數字是否合理（不是 NaN、不是空值）、有變化才 commit + push，過程記錄在 `monthly_report_task.log`（不會被提交，機器本地檔案）。
+
+**代價**：跟 `live_ta.py` 一樣，這支腳本需要電腦在排定時間是開著的，不會自動執行。原本的雲端排程設定還留著（已停用），之後如果 claude.ai 開放自訂雲端環境網路白名單，可以考慮切回去。
 
 ## 策略研究（AI 團隊 llm-council 兩輪辯論結論）
 
