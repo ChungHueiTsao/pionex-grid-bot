@@ -99,6 +99,24 @@ python dashboard.py
 
 **這個儀表板刻意沒有「啟動交易」按鈕**——只有「請求停止」，會建立一個旗標檔案，`live_ta.py` 下一輪輪詢偵測到後會自動安全退出（等同於你按 Ctrl+C），不會幫你平倉。要真的開始跑交易，還是要你自己在終端機執行 `live_ta.py`、完成裡面的三道確認。這是刻意的設計，不是還沒做完。
 
+## LINE 通知（`notify_watch.py`，2026-08-31）
+
+一個**唯讀**的背景排程腳本，透過 Windows Task Scheduler（工作名稱 `PionexGridBot-NotifyWatch`）每15分鐘執行一次，用你既有的 LINE 機器人（複用 `~/.claude/line-bot/notify_line.py` 同一組 Messaging API 憑證）推播三種情境的通知。**全部都是純資訊性質，不會下單、不會影響 `live_ta.py` 的任何決策**：
+
+1. **倉位訊號變化**（0% / 50% / 100% 互轉時）——用公開行情資料獨立計算三階梯訊號，不需要 API Key
+2. **乾淨進場點出現**——`tier==100%` 且收盤價乖離SMA200 ≤ 8% 且 MA5>MA10 時觸發一次，門檻是用完整 2017-2026 BTC 歷史回測驗證過的（乖離≤8%+動能確認：90天平均報酬+32.4%、中位數+28.0%，vs 沒過濾的100%倉位天數平均+23.7%、中位數+10.0%）
+3. **整體停損觸發**——讀 `live_status.json`（`live_ta.py` 自己寫的狀態檔），偵測到 `running=False` 且訊息是停損觸發時通知，因為這是唯一真的影響你帳戶的事件
+
+每種情境都有防重複推播的機制（狀態存在 `notify_watch_state.json`，同一個事件不會每15分鐘都通知一次）。
+
+```powershell
+# 手動測試一次（不會真的推播，除非條件真的成立）
+python notify_watch.py
+
+# 查看/管理排程
+Get-ScheduledTask -TaskName "PionexGridBot-NotifyWatch"
+```
+
 ### 全面漏洞盤點與修復（2026-08-31）
 
 使用者要求全面盤點還有哪些缺口，AI 團隊（Groq、Gemini、OpenRouter）針對「小資金新手、單一現貨交易對、市價單、輪詢式、狀態存本地JSON」這個具體架構列出常見失敗情境。實際修復並用假的 API 客戶端模擬各種異常情況驗證（不動用真實帳戶，14 項測試全部通過）：

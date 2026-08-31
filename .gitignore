@@ -10,6 +10,7 @@ live_grid_state.json
 live_ta.lock
 live_status.json
 live_stop_requested.flag
+notify_watch_state.json
 
 # Python
 __pycache__/
