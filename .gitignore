@@ -1,0 +1,14 @@
+# Secrets -- never commit
+.env
+
+# Local trading state (not secret, but not meant for version control either)
+live_ta_state.json
+live_ma_filter_state.json
+live_tiered_ma_state.json
+live_peak_equity_state.json
+live_grid_state.json
+live_ta.lock
+
+# Python
+__pycache__/
+*.pyc
