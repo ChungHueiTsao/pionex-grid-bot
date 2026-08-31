@@ -35,6 +35,7 @@ import os
 import sys
 import time
 import uuid
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -100,6 +101,43 @@ def _pid_is_running(pid: int) -> bool:
         return False
 
 
+def _quantize_down(value: float, decimals: int) -> float:
+    """Round toward zero to at most `decimals` decimal places. A raw Python
+    float (e.g. 0.002519659305) carries far more precision than an exchange
+    allows and gets rejected outright (Pionex: TRADE_AMOUNT_FILTER_DENIED).
+    Rounds DOWN, never up, so a sell size never exceeds the actual balance
+    and a buy amount never exceeds what was budgeted."""
+    if value <= 0:
+        return 0.0
+    quantum = Decimal(1).scaleb(-decimals)
+    return float(Decimal(str(value)).quantize(quantum, rounding=ROUND_DOWN))
+
+
+def _prepare_buy_amount(client: PionexClient, symbol: str, spend: float) -> float | None:
+    """Round a MARKET BUY's quote-currency amount to the exchange's allowed
+    precision and check it still clears the minimum order size afterward.
+    Returns None if the order would be rejected as too small once rounded --
+    callers should skip placing the order in that case rather than send a
+    doomed request."""
+    info = client.get_symbol_info(symbol)
+    amount = _quantize_down(spend, int(info["quotePrecision"]))
+    if amount < float(info["minAmount"]):
+        return None
+    return amount
+
+
+def _prepare_sell_size(client: PionexClient, symbol: str, qty: float, price: float) -> float | None:
+    """Round a MARKET SELL's base-currency size to the exchange's allowed
+    precision and check it clears both the minimum trade size and minimum
+    notional value afterward. Returns None if the order would be rejected
+    as too small once rounded."""
+    info = client.get_symbol_info(symbol)
+    size = _quantize_down(qty, int(info["basePrecision"]))
+    if size < float(info["minTradeSize"]) or size * price < float(info["minAmount"]):
+        return None
+    return size
+
+
 def acquire_lock() -> None:
     """Refuse to start a second instance against the same state directory.
     Running two copies of this script at once would have both act on the
@@ -150,8 +188,10 @@ def check_portfolio_stop_loss(client: PionexClient, symbol: str, max_drawdown_pc
     drawdown = (peak - equity) / peak if peak > 0 else 0.0
     if drawdown >= max_drawdown_pct:
         if base_free * price > DUST_THRESHOLD_QUOTE:
-            client.place_order(symbol, "SELL", "MARKET", size=str(base_free),
-                                client_order_id=f"stoploss-{uuid.uuid4().hex[:16]}")
+            size = _prepare_sell_size(client, symbol, base_free, price)
+            if size is not None:
+                client.place_order(symbol, "SELL", "MARKET", size=str(size),
+                                    client_order_id=f"stoploss-{uuid.uuid4().hex[:16]}")
         _atomic_write_json(PEAK_STATE_FILE, {"peak_equity": peak, "halted": True})
         # every strategy's own state must agree the position is now flat, or a
         # later restart will trust its stale "I'm still invested" belief and
@@ -310,17 +350,24 @@ class LiveTieredMATrader:
         msg = f"tier {actual_tier:.0%} -> {target_tier:.0%} (close={close})"
         if diff_value > 0 and diff_value > DUST_THRESHOLD_QUOTE:
             spend = min(diff_value, quote_free)
-            self.client.place_order(self.symbol, "BUY", "MARKET", amount=str(spend),
-                                     client_order_id=f"tma-buy-{uuid.uuid4().hex[:16]}")
-            msg += f", BUY ~{spend:.2f} {self.quote}"
+            amount = _prepare_buy_amount(self.client, self.symbol, spend)
+            if amount is not None:
+                self.client.place_order(self.symbol, "BUY", "MARKET", amount=str(amount),
+                                         client_order_id=f"tma-buy-{uuid.uuid4().hex[:16]}")
+                msg += f", BUY ~{amount:.2f} {self.quote}"
+            else:
+                msg += f", BUY skipped ({spend:.2f} {self.quote} below exchange minimum)"
         elif diff_value < 0 and -diff_value > DUST_THRESHOLD_QUOTE:
             sell_value = min(-diff_value, current_value)
             sell_qty = (sell_value / close) if close > 0 else 0
             sell_qty = min(sell_qty, base_free)
-            if sell_qty > 0:
-                self.client.place_order(self.symbol, "SELL", "MARKET", size=str(sell_qty),
+            size = _prepare_sell_size(self.client, self.symbol, sell_qty, close) if sell_qty > 0 else None
+            if size is not None:
+                self.client.place_order(self.symbol, "SELL", "MARKET", size=str(size),
                                          client_order_id=f"tma-sell-{uuid.uuid4().hex[:16]}")
-                msg += f", SELL ~{sell_qty:.6f} {self.base}"
+                msg += f", SELL ~{size:.6f} {self.base}"
+            elif sell_qty > 0:
+                msg += f", SELL skipped ({sell_qty:.6f} {self.base} below exchange minimum)"
         else:
             msg += " (diff below dust threshold, skipped)"
 
@@ -391,18 +438,22 @@ class LiveMAFilterTrader:
 
         if not holding and close > trend:
             spend = quote_free * self.position_pct
-            if spend > DUST_THRESHOLD_QUOTE:
-                self.client.place_order(self.symbol, "BUY", "MARKET", amount=str(spend),
+            amount = (_prepare_buy_amount(self.client, self.symbol, spend)
+                      if spend > DUST_THRESHOLD_QUOTE else None)
+            if amount is not None:
+                self.client.place_order(self.symbol, "BUY", "MARKET", amount=str(amount),
                                          client_order_id=f"maf-buy-{uuid.uuid4().hex[:16]}")
                 self.last_bar_time = latest_time
-                self._save_state(spend / close)
-                return f"BUY: close {close} > SMA({self.ma_period}) {trend:.2f}, spent ~{spend:.2f} {self.quote}"
+                self._save_state(amount / close)
+                return f"BUY: close {close} > SMA({self.ma_period}) {trend:.2f}, spent ~{amount:.2f} {self.quote}"
         elif holding and close < trend:
-            self.client.place_order(self.symbol, "SELL", "MARKET", size=str(base_free),
-                                     client_order_id=f"maf-sell-{uuid.uuid4().hex[:16]}")
-            self.last_bar_time = latest_time
-            self._save_state(0.0)
-            return f"SELL: close {close} < SMA({self.ma_period}) {trend:.2f}"
+            size = _prepare_sell_size(self.client, self.symbol, base_free, close)
+            if size is not None:
+                self.client.place_order(self.symbol, "SELL", "MARKET", size=str(size),
+                                         client_order_id=f"maf-sell-{uuid.uuid4().hex[:16]}")
+                self.last_bar_time = latest_time
+                self._save_state(0.0)
+                return f"SELL: close {close} < SMA({self.ma_period}) {trend:.2f}"
 
         self.last_bar_time = latest_time
         self._save_state(base_free if holding else 0.0)
@@ -451,9 +502,11 @@ class LiveTATrader:
         base_free = balances[self.base].free if self.base in balances else 0.0
         price = float(self.client.get_ticker(self.symbol)[0]["close"])
         if self._is_holding(base_free, price):
-            self.client.place_order(self.symbol, "SELL", "MARKET", size=str(base_free),
-                                     client_order_id=f"emaatr-sell-{uuid.uuid4().hex[:16]}")
-            print(f"SOLD {base_free} {self.base} ({reason})")
+            size = _prepare_sell_size(self.client, self.symbol, base_free, price)
+            if size is not None:
+                self.client.place_order(self.symbol, "SELL", "MARKET", size=str(size),
+                                         client_order_id=f"emaatr-sell-{uuid.uuid4().hex[:16]}")
+                print(f"SOLD {size} {self.base} ({reason})")
         self.entry_price = self.stop_price = self.take_profit_price = None
         self._save_state()
 
@@ -502,15 +555,17 @@ class LiveTATrader:
 
         if not holding and golden:
             spend = quote_free * self.position_pct
-            if spend <= DUST_THRESHOLD_QUOTE:
+            amount = (_prepare_buy_amount(self.client, self.symbol, spend)
+                      if spend > DUST_THRESHOLD_QUOTE else None)
+            if amount is None:
                 print("Golden cross signal, but no meaningful quote balance to spend.")
             else:
-                self.client.place_order(self.symbol, "BUY", "MARKET", amount=str(spend),
+                self.client.place_order(self.symbol, "BUY", "MARKET", amount=str(amount),
                                          client_order_id=f"emaatr-buy-{uuid.uuid4().hex[:16]}")
                 self.entry_price = close
                 self.stop_price = close - self.stop_mult * atr[i]
                 self.take_profit_price = close + self.tp_mult * atr[i]
-                print(f"BUY golden cross: spent ~{spend:.2f} {self.quote} at ~{close}, "
+                print(f"BUY golden cross: spent ~{amount:.2f} {self.quote} at ~{close}, "
                       f"stop={self.stop_price:.2f} tp={self.take_profit_price:.2f}")
         elif holding and death:
             self._sell_all("death cross (trend reversal)")

@@ -49,6 +49,7 @@ class PionexClient:
         self.api_secret = api_secret
         self.timeout = timeout
         self._session = requests.Session()
+        self._symbol_info_cache: dict[str, dict] = {}
 
     # ---- signing -----------------------------------------------------
 
@@ -123,6 +124,21 @@ class PionexClient:
             "symbol": symbol, "type": type_,
         })
         return data["data"]["tickers"]
+
+    def get_symbol_info(self, symbol: str) -> dict:
+        """Public endpoint (no credentials needed) -- exchange-enforced
+        precision (decimal places allowed) and minimum order sizes for a
+        symbol. Cached per-instance since this is called before every order.
+        Without rounding to these limits, an order amount/size carrying
+        Python float noise (e.g. 17 significant digits) is rejected outright
+        by Pionex with a TRADE_AMOUNT_FILTER_DENIED error."""
+        if symbol not in self._symbol_info_cache:
+            data = self._request("GET", "/api/v1/common/symbols")
+            info = next((s for s in data["data"]["symbols"] if s["symbol"] == symbol), None)
+            if info is None:
+                raise PionexAPIError(0, f"Unknown symbol {symbol!r} from /api/v1/common/symbols")
+            self._symbol_info_cache[symbol] = info
+        return self._symbol_info_cache[symbol]
 
     def get_depth(self, symbol: str, limit: int = 20) -> Any:
         data = self._request("GET", "/api/v1/market/depth", {"symbol": symbol, "limit": limit})
