@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>派網交易策略月度報告</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --s-hold: #2a78d6;
+    --s-tiered: #eb6834;
+    --s-maf: #1baf7a;
+    --s-grid: #eda100;
+    --s-emaatr: #e87ba4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --gridline: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --s-hold: #3987e5;
+      --s-tiered: #d95926;
+      --s-maf: #199e70;
+      --s-grid: #c98500;
+      --s-emaatr: #d55181;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --s-hold: #3987e5;
+    --s-tiered: #d95926;
+    --s-maf: #199e70;
+    --s-grid: #c98500;
+    --s-emaatr: #d55181;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang TC", sans-serif;
+    padding: 24px 16px 48px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 32px 0 12px; }
+  .subtitle { font-size: 13px; color: var(--text-secondary); margin: 0 0 4px; line-height: 1.6; }
+  .updated { font-size: 12px; color: var(--text-muted); margin-bottom: 24px; }
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 16px 8px;
+  }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 14px; height: 2px; border-radius: 1px; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .gridline { stroke: var(--gridline); stroke-width: 1; }
+  .axis-text { fill: var(--text-muted); font-size: 10px; }
+  .series-line { fill: none; stroke-width: 2; }
+  .end-label { font-size: 10px; font-weight: 600; }
+  .end-label-sub { font-size: 9px; fill: var(--text-muted); font-weight: 400; }
+  .crosshair-line { stroke: var(--baseline); stroke-width: 1; pointer-events: none; }
+  .hover-dot { pointer-events: none; }
+  .tooltip {
+    position: absolute; pointer-events: none; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font-size: 11px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); white-space: nowrap;
+    opacity: 0; transition: opacity 0.1s; z-index: 5;
+  }
+  .tooltip-date { color: var(--text-secondary); font-size: 10px; margin-bottom: 4px; }
+  .tooltip-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .tooltip-key { width: 10px; height: 2px; flex-shrink: 0; }
+  .tooltip-name { color: var(--text-secondary); }
+  .tooltip-value { color: var(--text-primary); font-weight: 600; margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; }
+  .chart-container { position: relative; }
+  .caption { text-align: center; margin-top: 6px; font-size: 10px; color: var(--text-muted); }
+
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 12px; }
+  .stat-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .stat-label { font-size: 10px; color: var(--text-secondary); display: flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+  .stat-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .stat-value { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  table.data-table caption { text-align: left; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; caption-side: top; }
+  table.data-table th, table.data-table td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--gridline); font-variant-numeric: tabular-nums; }
+  table.data-table th:first-child, table.data-table td:first-child { text-align: left; }
+  table.data-table th { color: var(--text-secondary); font-weight: 600; }
+  .table-scroll { overflow-x: auto; }
+
+  .note {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.7; margin-top: 20px;
+    padding: 14px 16px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .note strong { color: var(--text-primary); }
+  .note ul { margin: 6px 0 0; padding-left: 18px; }
+  .no-history { font-size: 13px; color: var(--text-muted); padding: 24px; text-align: center; }
+
+  @media (max-width: 700px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>派網交易策略月度研究報告</h1>
+  <p class="subtitle">網格、技術指標策略 vs 買入持有 BTC — 每月自動用最新真實資料重新回測</p>
+  <p class="updated" id="updated-text"></p>
+
+  <h2>長期權益曲線（每次報告都用當下最新資料重跑，不是固定歷史）</h2>
+  <div class="card">
+    <div class="legend" id="legend"></div>
+    <div class="chart-container">
+      <svg id="equity-chart" viewBox="0 0 920 380" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+    <div class="caption">Y 軸為對數座標（報酬差距超過百倍時，線性座標會讓落後的策略被壓成看不見的平線）</div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <h2>目前正式使用策略：三階梯多均線</h2>
+  <div id="current-strategy-note" class="note"></div>
+
+  <h2>逐月追蹤（累積報酬隨時間變化）</h2>
+  <div class="card" id="history-card">
+    <div class="chart-container">
+      <svg id="history-chart" viewBox="0 0 920 260" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </div>
+
+  <h2>資料表</h2>
+  <div class="table-scroll">
+    <table class="data-table">
+      <caption>供不方便看圖表的情況參考</caption>
+      <thead><tr><th>策略</th><th>期末權益（每$1000起始）</th><th>總報酬</th><th>最大回撤</th><th>成交次數</th></tr></thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>怎麼讀這份報告：</strong>
+    <ul>
+      <li>這是完整、連續複利的回測（不是切成好幾段各自重新起始），所有策略都從相同起點的 $1000 開始比較。</li>
+      <li>「三階梯多均線」是目前實際採用的策略，其他幾個是研究過程留下的對照組。</li>
+      <li><strong>過去績效不代表未來表現。</strong>所有策略都只在同一段真實歷史（BTC/USDT）上驗證過，換一段不同的市場環境，結果可能完全不同。</li>
+      <li>這份報告由 Claude 每月自動重新產生，但是否要根據新發現調整實際使用的策略，仍然需要人工檢視決定，不會自動修改正在執行的交易程式。</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const DATA = __CHART_DATA__;
+const HISTORY = __HISTORY_DATA__;
+
+function fmtPct(p) { return (p >= 0 ? '+' : '') + p.toFixed(1) + '%'; }
+function fmtUSD(v) { return '$' + Math.round(v).toLocaleString(); }
+
+document.getElementById('updated-text').textContent =
+  `最後更新：${DATA.summary.generated_at}　|　回測區間：${DATA.summary.period_start} → ${DATA.summary.period_end}（${DATA.summary.days} 天）`;
+
+const seriesDefs = [
+  { key: 'buy_hold', name: '買入持有', color: 'var(--s-hold)', data: DATA.buy_hold_equity, pct: DATA.summary.buy_hold_pct, mdd: DATA.summary.buy_hold_mdd, trades: '-' },
+  { key: 'tiered_ma', name: '三階梯多均線', color: 'var(--s-tiered)', data: DATA.tiered_ma_equity, pct: DATA.summary.tiered_ma_pct, mdd: DATA.summary.tiered_ma_mdd, trades: DATA.summary.tiered_ma_trades },
+  { key: 'ma_filter', name: '單一均線濾網', color: 'var(--s-maf)', data: DATA.ma_filter_equity, pct: DATA.summary.ma_filter_pct, mdd: DATA.summary.ma_filter_mdd, trades: DATA.summary.ma_filter_trades },
+  { key: 'grid', name: '網格(walk-forward)', color: 'var(--s-grid)', data: DATA.grid_equity, pct: DATA.summary.grid_pct, mdd: DATA.summary.grid_mdd, trades: DATA.summary.grid_trades },
+  { key: 'emaatr', name: 'EMA+ATR趨勢跟隨', color: 'var(--s-emaatr)', data: DATA.emaatr_equity, pct: DATA.summary.emaatr_pct, mdd: DATA.summary.emaatr_mdd, trades: DATA.summary.emaatr_trades },
+];
+
+// ---- legend ----
+const legendEl = document.getElementById('legend');
+seriesDefs.forEach(s => {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  const sw = document.createElement('span');
+  sw.className = 'legend-swatch';
+  sw.style.background = s.color;
+  item.appendChild(sw);
+  item.appendChild(document.createTextNode(s.name));
+  legendEl.appendChild(item);
+});
+
+// ---- stat cards ----
+const statsEl = document.getElementById('stats');
+seriesDefs.forEach(s => {
+  const card = document.createElement('div');
+  card.className = 'stat-card';
+  const label = document.createElement('div');
+  label.className = 'stat-label';
+  const sw = document.createElement('span');
+  sw.className = 'stat-swatch';
+  sw.style.background = s.color;
+  label.appendChild(sw);
+  label.appendChild(document.createTextNode(s.name));
+  const val = document.createElement('div');
+  val.className = 'stat-value';
+  val.textContent = fmtPct(s.pct);
+  const sub = document.createElement('div');
+  sub.className = 'stat-sub';
+  sub.textContent = `MDD ${s.mdd.toFixed(1)}%`;
+  card.appendChild(label);
+  card.appendChild(val);
+  card.appendChild(sub);
+  statsEl.appendChild(card);
+});
+
+// ---- current strategy note ----
+document.getElementById('current-strategy-note').innerHTML =
+  `目前 <code>live_ta.py</code> 預設使用「三階梯多均線」策略。本次回測結果：` +
+  `<strong>${fmtPct(DATA.summary.tiered_ma_pct)}</strong>，最大回撤 <strong>${DATA.summary.tiered_ma_mdd.toFixed(1)}%</strong>，` +
+  `共 ${DATA.summary.tiered_ma_trades} 筆成交。同期買入持有為 ${fmtPct(DATA.summary.buy_hold_pct)}。`;
+
+// ---- table ----
+const tbody = document.getElementById('table-body');
+seriesDefs.forEach(s => {
+  const tr = document.createElement('tr');
+  const cells = [s.name, fmtUSD(s.data[s.data.length - 1]), fmtPct(s.pct), s.mdd.toFixed(1) + '%', String(s.trades)];
+  cells.forEach(c => {
+    const td = document.createElement('td');
+    td.textContent = c;
+    tr.appendChild(td);
+  });
+  tbody.appendChild(tr);
+});
+
+// ================= equity chart (log scale) =================
+(function drawEquityChart() {
+  const svg = document.getElementById('equity-chart');
+  const W = 920, H = 380;
+  const M = { top: 16, right: 110, bottom: 24, left: 8 };
+  const plotW = W - M.left - M.right;
+  const plotH = H - M.top - M.bottom;
+  const n = DATA.dates.length;
+
+  const allVals = seriesDefs.flatMap(s => s.data).filter(v => v > 0);
+  const yMin = Math.min(...allVals) * 0.85;
+  const yMax = Math.max(...allVals) * 1.15;
+  const logMin = Math.log10(yMin), logMax = Math.log10(yMax);
+
+  function xScale(i) { return M.left + (i / (n - 1)) * plotW; }
+  function yScale(v) {
+    const lv = Math.log10(Math.max(v, yMin));
+    return M.top + (1 - (lv - logMin) / (logMax - logMin)) * plotH;
+  }
+  function pathFor(data) {
+    let d = '';
+    for (let i = 0; i < n; i++) {
+      d += (i === 0 ? 'M' : 'L') + xScale(i).toFixed(2) + ',' + yScale(data[i]).toFixed(2) + ' ';
+    }
+    return d;
+  }
+
+  const ns = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  const gridVals = [];
+  for (let p = Math.floor(logMin); p <= Math.ceil(logMax); p++) {
+    const v = Math.pow(10, p);
+    if (v >= yMin && v <= yMax) gridVals.push(v);
+    const v5 = v * 5;
+    if (v5 >= yMin && v5 <= yMax) gridVals.push(v5);
+  }
+  gridVals.forEach(v => {
+    const y = yScale(v);
+    svg.appendChild(el('line', { x1: M.left, x2: M.left + plotW, y1: y.toFixed(2), y2: y.toFixed(2), class: 'gridline' }));
+    const label = el('text', { x: M.left, y: (y - 4).toFixed(2), class: 'axis-text' });
+    label.textContent = v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
+    svg.appendChild(label);
+  });
+
+  const y0 = yScale(1000);
+  svg.appendChild(el('line', { x1: M.left, x2: M.left + plotW, y1: y0.toFixed(2), y2: y0.toFixed(2), class: 'gridline', 'stroke-dasharray': '3,3' }));
+
+  const yearsShown = new Set();
+  for (let i = 0; i < n; i++) {
+    const year = DATA.dates[i].slice(0, 4);
+    if (!yearsShown.has(year) && DATA.dates[i].slice(5, 7) === '01') {
+      yearsShown.add(year);
+      const t = el('text', { x: xScale(i).toFixed(2), y: H - 6, class: 'axis-text', 'text-anchor': 'middle' });
+      t.textContent = year;
+      svg.appendChild(t);
+    }
+  }
+
+  seriesDefs.forEach(s => {
+    svg.appendChild(el('path', { d: pathFor(s.data), class: 'series-line', stroke: s.color }));
+    const endX = xScale(n - 1), endY = yScale(s.data[s.data.length - 1]);
+    const label = el('text', { x: (endX + 6).toFixed(2), y: (endY + 3).toFixed(2), class: 'end-label', fill: s.color });
+    label.textContent = s.name;
+    svg.appendChild(label);
+    const sub = el('text', { x: (endX + 6).toFixed(2), y: (endY + 14).toFixed(2), class: 'end-label-sub' });
+    sub.textContent = fmtPct(s.pct);
+    svg.appendChild(sub);
+  });
+
+  const crosshair = el('line', { x1: 0, x2: 0, y1: M.top, y2: M.top + plotH, class: 'crosshair-line', opacity: 0 });
+  svg.appendChild(crosshair);
+  const hoverDots = seriesDefs.map(s => {
+    const dot = el('circle', { r: 3.5, fill: s.color, opacity: 0, stroke: 'var(--surface-1)', 'stroke-width': 1.5 });
+    svg.appendChild(dot);
+    return dot;
+  });
+
+  const tooltip = document.getElementById('tooltip');
+  const hitRect = el('rect', { x: M.left, y: M.top, width: plotW, height: plotH, fill: 'transparent' });
+  svg.appendChild(hitRect);
+
+  function onMove(evt) {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const px = (evt.clientX - rect.left) * scaleX;
+    let i = Math.round(((px - M.left) / plotW) * (n - 1));
+    i = Math.max(0, Math.min(n - 1, i));
+    const x = xScale(i);
+    crosshair.setAttribute('x1', x.toFixed(2));
+    crosshair.setAttribute('x2', x.toFixed(2));
+    crosshair.setAttribute('opacity', 1);
+    seriesDefs.forEach((s, idx) => {
+      hoverDots[idx].setAttribute('cx', x.toFixed(2));
+      hoverDots[idx].setAttribute('cy', yScale(s.data[i]).toFixed(2));
+      hoverDots[idx].setAttribute('opacity', 1);
+    });
+    tooltip.innerHTML = '';
+    const dateEl = document.createElement('div');
+    dateEl.className = 'tooltip-date';
+    dateEl.textContent = DATA.dates[i];
+    tooltip.appendChild(dateEl);
+    seriesDefs.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'tooltip-row';
+      const key = document.createElement('span');
+      key.className = 'tooltip-key';
+      key.style.background = s.color;
+      const name = document.createElement('span');
+      name.className = 'tooltip-name';
+      name.textContent = s.name;
+      const val = document.createElement('span');
+      val.className = 'tooltip-value';
+      val.textContent = fmtUSD(s.data[i]);
+      row.appendChild(key); row.appendChild(name); row.appendChild(val);
+      tooltip.appendChild(row);
+    });
+    const containerRect = svg.parentElement.getBoundingClientRect();
+    const clampedX = Math.min(x / scaleX, containerRect.width - 170);
+    tooltip.style.left = Math.max(0, clampedX) + 'px';
+    tooltip.style.top = '4px';
+    tooltip.style.opacity = 1;
+  }
+  hitRect.addEventListener('pointermove', onMove);
+  hitRect.addEventListener('pointerleave', () => {
+    crosshair.setAttribute('opacity', 0);
+    hoverDots.forEach(d => d.setAttribute('opacity', 0));
+    tooltip.style.opacity = 0;
+  });
+})();
+
+// ================= history chart (linear, one point per report run) =================
+(function drawHistoryChart() {
+  const svg = document.getElementById('history-chart');
+  const card = document.getElementById('history-card');
+  if (HISTORY.length < 2) {
+    card.innerHTML = '<div class="no-history">目前只有一次報告紀錄，累積至少兩次月度報告後這裡會顯示趨勢圖。</div>';
+    return;
+  }
+  const W = 920, H = 260;
+  const M = { top: 16, right: 100, bottom: 24, left: 40 };
+  const plotW = W - M.left - M.right;
+  const plotH = H - M.top - M.bottom;
+  const n = HISTORY.length;
+
+  const histSeriesDefs = [
+    { key: 'buy_hold_pct', name: '買入持有', color: 'var(--s-hold)' },
+    { key: 'tiered_ma_pct', name: '三階梯多均線', color: 'var(--s-tiered)' },
+    { key: 'ma_filter_pct', name: '單一均線濾網', color: 'var(--s-maf)' },
+    { key: 'grid_pct', name: '網格', color: 'var(--s-grid)' },
+    { key: 'emaatr_pct', name: 'EMA+ATR', color: 'var(--s-emaatr)' },
+  ];
+  const allVals = histSeriesDefs.flatMap(s => HISTORY.map(h => h[s.key]));
+  const yMin = Math.min(...allVals, 0) * 1.1;
+  const yMax = Math.max(...allVals) * 1.1;
+
+  function xScale(i) { return n === 1 ? M.left + plotW / 2 : M.left + (i / (n - 1)) * plotW; }
+  function yScale(v) { return M.top + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  const ns = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  const y0 = yScale(0);
+  svg.appendChild(el('line', { x1: M.left, x2: M.left + plotW, y1: y0.toFixed(2), y2: y0.toFixed(2), class: 'gridline' }));
+  svg.appendChild(el('text', { x: M.left - 6, y: (y0 + 3).toFixed(2), class: 'axis-text', 'text-anchor': 'end' })).textContent = '0%';
+
+  HISTORY.forEach((h, i) => {
+    const t = el('text', { x: xScale(i).toFixed(2), y: H - 6, class: 'axis-text', 'text-anchor': 'middle' });
+    t.textContent = h.date.slice(5);
+    svg.appendChild(t);
+  });
+
+  histSeriesDefs.forEach(s => {
+    let d = '';
+    HISTORY.forEach((h, i) => { d += (i === 0 ? 'M' : 'L') + xScale(i).toFixed(2) + ',' + yScale(h[s.key]).toFixed(2) + ' '; });
+    svg.appendChild(el('path', { d, class: 'series-line', stroke: s.color }));
+    HISTORY.forEach((h, i) => {
+      svg.appendChild(el('circle', { cx: xScale(i).toFixed(2), cy: yScale(h[s.key]).toFixed(2), r: 3, fill: s.color }));
+    });
+    const last = HISTORY[HISTORY.length - 1];
+    const label = el('text', { x: (xScale(n - 1) + 6).toFixed(2), y: (yScale(last[s.key]) + 3).toFixed(2), class: 'end-label', fill: s.color });
+    label.textContent = s.name;
+    svg.appendChild(label);
+  });
+})();
+</script>
+</body>
+</html>
