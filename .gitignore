@@ -12,3 +12,6 @@ live_ta.lock
 # Python
 __pycache__/
 *.pyc
+
+# Local scheduled-task log (machine-specific, not meant for version control)
+monthly_report_task.log
